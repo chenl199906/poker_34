@@ -1,0 +1,1802 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <title>线下扑克助手</title>
+  <!-- Tailwind CSS -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- Lucide Icons -->
+  <script src="https://unpkg.com/lucide@latest"></script>
+  <!-- MQTT over WebSocket -->
+  <script src="https://unpkg.com/mqtt@5.3.5/dist/mqtt.min.js"></script>
+  <style>
+    html, body {
+      height: 100%;
+      height: 100vh;
+      height: 100dvh;
+      overflow: hidden;
+      margin: 0;
+      padding: 0;
+      -webkit-touch-callout: none;
+      -webkit-user-select: none;
+      user-select: none;
+    }
+    .felt-bg {
+      background: radial-gradient(circle at 50% 50%, #15803d 0%, #166534 50%, #14532d 100%);
+    }
+    .card-transition {
+      transition: transform 0.15s cubic-bezier(0.2, 0, 1), box-shadow 0.15s ease;
+    }
+    .no-scrollbar::-webkit-scrollbar {
+      display: none;
+    }
+    .no-scrollbar {
+      -ms-overflow-style: none;
+      scrollbar-width: none;
+    }
+  </style>
+</head>
+<body class="felt-bg text-slate-100 flex flex-col font-sans">
+
+  <!-- ==================== 1. 首页：身份与房间号加入 ==================== -->
+  <div id="lobby-screen" class="fixed inset-0 z-50 bg-slate-950/95 flex flex-col items-center justify-center p-4 backdrop-blur-md">
+    <div class="w-full max-w-sm bg-slate-900/95 border border-emerald-500/30 p-6 rounded-2xl shadow-2xl flex flex-col items-center">
+      <div class="w-12 h-12 bg-emerald-950 border border-emerald-500/50 rounded-2xl flex items-center justify-center mb-3 shadow-lg">
+        <i data-lucide="layers" class="w-7 h-7 text-amber-400"></i>
+      </div>
+      <h1 class="text-xl font-black text-white tracking-wider mb-5">线下扑克助手</h1>
+
+      <!-- 选项一：我是房主 -->
+      <button id="btn-host-create" type="button" class="w-full py-2.5 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 active:scale-[0.98] text-white font-bold rounded-xl shadow-lg shadow-emerald-900/40 flex items-center justify-center space-x-2 transition cursor-pointer text-sm mb-3">
+        <i data-lucide="plus-circle" class="w-4 h-4 pointer-events-none"></i>
+        <span class="pointer-events-none">创建房间 (我是房主 A)</span>
+      </button>
+
+      <div class="flex items-center w-full my-2 text-slate-500 text-xs">
+        <div class="flex-1 border-t border-slate-700"></div>
+        <span class="px-3">其他玩家加入</span>
+        <div class="flex-1 border-t border-slate-700"></div>
+      </div>
+
+      <!-- 选项二：输入房间号 -->
+      <div class="w-full space-y-2.5 mt-1">
+        <div class="bg-slate-800/80 p-3 rounded-xl border border-slate-700 space-y-2">
+          <div class="flex items-center justify-between">
+            <span class="text-xs font-bold text-amber-300">输入房主的 6 位房间号：</span>
+          </div>
+          <input id="input-room-code" type="text" maxlength="6" placeholder="输入 6 位数字房间号..." class="w-full p-2.5 bg-slate-950 border border-slate-700 rounded-lg text-center text-lg font-mono tracking-widest text-white focus:outline-none focus:border-emerald-500 uppercase">
+        </div>
+
+        <button id="btn-join-room" type="button" class="w-full py-2.5 bg-emerald-600 hover:bg-emerald-500 active:scale-[0.98] text-white font-bold rounded-xl transition flex items-center justify-center space-x-2 cursor-pointer text-sm shadow-lg shadow-emerald-900/40">
+          <i data-lucide="log-in" class="w-4 h-4 pointer-events-none"></i>
+          <span class="pointer-events-none">一键秒进房间</span>
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ==================== 2. 房主房间号悬浮展示面板 ==================== -->
+  <div id="modal-room-info" class="fixed inset-0 z-40 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 hidden">
+    <div class="bg-slate-900 border border-emerald-500/50 w-full max-w-xs rounded-2xl p-5 shadow-2xl flex flex-col items-center text-center">
+      <div class="w-12 h-12 bg-emerald-950 rounded-full flex items-center justify-center text-emerald-400 mb-2 border border-emerald-500/30">
+        <i data-lucide="check-circle" class="w-7 h-7"></i>
+      </div>
+      <h3 class="font-bold text-white text-sm mb-1">房间已创建</h3>
+      <p class="text-xs text-slate-300 mb-3">让其他玩家输入下方房间号即可加入：</p>
+      
+      <div class="bg-slate-950 px-4 py-2 rounded-xl border border-emerald-500/40 mb-4 flex items-center justify-center space-x-2">
+        <span id="display-room-code" class="text-2xl font-black text-amber-300 font-mono tracking-wider">------</span>
+        <button onclick="copyRoomCode()" class="p-1 text-slate-400 hover:text-white cursor-pointer" title="复制房间号">
+          <i data-lucide="copy" class="w-4 h-4"></i>
+        </button>
+      </div>
+
+      <button onclick="closeRoomInfoModal()" class="w-full py-2 bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded-xl text-xs shadow-md cursor-pointer">
+        进入牌桌
+      </button>
+    </div>
+  </div>
+
+  <!-- ==================== 3. 审批与互换牌系列弹窗 ==================== -->
+  <!-- 3.1 房主透视审批 -->
+  <div id="modal-b-approve" class="fixed inset-0 z-50 bg-black/90 backdrop-blur-md flex items-center justify-center p-4 hidden">
+    <div class="bg-slate-900 border border-amber-500/40 w-full max-w-xs rounded-2xl p-4 shadow-2xl flex flex-col items-center text-center">
+      <div class="w-10 h-10 bg-amber-500/20 rounded-full flex items-center justify-center text-amber-400 mb-2">
+        <i data-lucide="shield-alert" class="w-6 h-6"></i>
+      </div>
+      <h3 class="font-bold text-white text-sm mb-1">房主巡视视角申请</h3>
+      <p class="text-xs text-slate-300 mb-4 leading-relaxed">
+        房主申请开启<strong class="text-amber-300">「全视角巡查」</strong>权限，同意后房主可随时切换查看你及其他玩家的手牌。是否同意？
+      </p>
+      <div class="grid grid-cols-2 gap-2 w-full">
+        <button onclick="replyPeekPermission(false)" class="py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg text-xs font-semibold cursor-pointer">拒绝</button>
+        <button onclick="replyPeekPermission(true)" class="py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-xs font-bold shadow cursor-pointer">同意开启</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 3.2 撤回审批 -->
+  <div id="modal-undo-approve" class="fixed inset-0 z-50 bg-black/90 backdrop-blur-md flex items-center justify-center p-4 hidden">
+    <div class="bg-slate-900 border border-rose-500/40 w-full max-w-xs rounded-2xl p-4 shadow-2xl flex flex-col items-center text-center">
+      <div class="w-10 h-10 bg-rose-500/20 rounded-full flex items-center justify-center text-rose-400 mb-2">
+        <i data-lucide="rotate-ccw" class="w-6 h-6"></i>
+      </div>
+      <h3 class="font-bold text-white text-sm mb-1">出牌撤回审批</h3>
+      <p id="undo-approve-desc" class="text-xs text-slate-300 mb-4 leading-relaxed">
+        玩家申请撤回上一次出牌。是否同意撤回并恢复手牌？
+      </p>
+      <div class="grid grid-cols-2 gap-2 w-full">
+        <button onclick="replyUndoDecision(false)" class="py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg text-xs font-semibold cursor-pointer">拒绝撤回</button>
+        <button onclick="replyUndoDecision(true)" class="py-2 bg-rose-600 hover:bg-rose-500 text-white rounded-lg text-xs font-bold shadow cursor-pointer">同意撤回</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 3.3 房主未授权透视提示 -->
+  <div id="modal-host-request-peek" class="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 hidden">
+    <div class="bg-slate-900 border border-slate-700 w-full max-w-xs rounded-2xl p-4 shadow-2xl flex flex-col items-center text-center">
+      <div class="w-10 h-10 bg-slate-800 rounded-full flex items-center justify-center text-amber-400 mb-2">
+        <i data-lucide="lock" class="w-5 h-5"></i>
+      </div>
+      <h3 class="font-bold text-white text-sm mb-1">未获得查看授权</h3>
+      <p class="text-xs text-slate-300 mb-4 leading-relaxed">
+        房主若要查看其他玩家手牌，必须先向 <strong class="text-amber-300">玩家 B</strong> 发送申请并获得同意。
+      </p>
+      <div class="flex space-x-2 w-full">
+        <button onclick="closeHostRequestPeekModal()" class="flex-1 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg text-xs cursor-pointer">取消</button>
+        <button onclick="sendPeekRequestToB()" class="flex-1 py-1.5 bg-amber-600 hover:bg-amber-500 text-white font-bold rounded-lg text-xs shadow-md cursor-pointer">向 B 发起申请</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 3.4 发起递牌选择目标玩家弹窗 -->
+  <div id="modal-exchange-target" class="fixed inset-0 z-50 bg-black/85 backdrop-blur-sm flex items-center justify-center p-4 hidden">
+    <div class="bg-slate-900 border border-amber-500/40 w-full max-w-xs rounded-2xl p-4 shadow-2xl flex flex-col items-center text-center">
+      <div class="w-10 h-10 bg-amber-500/20 rounded-full flex items-center justify-center text-amber-400 mb-2">
+        <i data-lucide="arrow-left-right" class="w-5 h-5"></i>
+      </div>
+      <h3 class="font-bold text-white text-sm mb-1">开局递牌</h3>
+      <p id="exchange-selected-card-desc" class="text-xs text-slate-300 mb-3">
+        当前选中的牌：<span class="text-amber-300 font-bold font-mono">--</span>
+      </p>
+      <div class="w-full text-xs text-slate-400 mb-2 text-left pl-1">请选择要递给的玩家：</div>
+      <div id="exchange-target-player-btns" class="grid grid-cols-3 gap-2 w-full mb-4">
+        <!-- 动态生成可选目标席位 -->
+      </div>
+      <button onclick="closeExchangeTargetModal()" class="w-full py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg text-xs">取消</button>
+    </div>
+  </div>
+
+  <!-- 3.5 接收方回赠牌弹窗 (如B收到A递牌，需同意并选择一张牌回给A) -->
+  <div id="modal-exchange-reply" class="fixed inset-0 z-50 bg-black/90 backdrop-blur-md flex items-center justify-center p-4 hidden">
+    <div class="bg-slate-900 border border-emerald-500/50 w-full max-w-sm rounded-2xl p-4 shadow-2xl flex flex-col items-center text-center max-h-[92vh] overflow-hidden">
+      <div class="w-10 h-10 bg-emerald-500/20 rounded-full flex items-center justify-center text-emerald-400 mb-1">
+        <i data-lucide="gift" class="w-5 h-5"></i>
+      </div>
+      <h3 class="font-bold text-white text-sm mb-1">收到递牌邀请</h3>
+      <p id="exchange-reply-desc" class="text-xs text-slate-300 mb-2">
+        玩家 A 递给你一张牌：
+      </p>
+      <!-- 展示对方递过来的牌面预览 -->
+      <div id="exchange-from-card-preview" class="mb-2.5 flex justify-center"></div>
+
+      <div class="w-full border-t border-slate-800 pt-2 mb-1.5 text-left">
+        <div class="text-[11px] text-amber-300 font-bold mb-1 flex items-center justify-between">
+          <span>请从你的手牌中挑选一张回赠给对方：</span>
+          <span id="exchange-reply-card-selected-tip" class="text-emerald-400 text-[10px]">未选择</span>
+        </div>
+        <!-- 接收方可点击选择的手牌横向滚动预览池 -->
+        <div id="exchange-reply-cards-pool" class="w-full max-h-36 overflow-y-auto no-scrollbar flex flex-wrap gap-1.5 justify-center p-1 bg-black/40 rounded-lg border border-slate-800"></div>
+      </div>
+
+      <div class="grid grid-cols-2 gap-2 w-full mt-2">
+        <button onclick="replyExchangeOffer(false)" class="py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg text-xs font-semibold cursor-pointer">拒绝本次递牌</button>
+        <button id="btn-exchange-reply-confirm" onclick="replyExchangeOffer(true)" disabled class="py-2 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-40 disabled:cursor-not-allowed text-white rounded-lg text-xs font-bold shadow cursor-pointer">同意并回赠</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 3.6 全场玩家全员确认弹窗 (任何交换，在场其余玩家均需再次确认) -->
+  <div id="modal-exchange-global-confirm" class="fixed inset-0 z-50 bg-black/90 backdrop-blur-md flex items-center justify-center p-4 hidden">
+    <div class="bg-slate-900 border border-amber-500/50 w-full max-w-xs rounded-2xl p-4 shadow-2xl flex flex-col items-center text-center">
+      <div class="w-10 h-10 bg-amber-500/20 rounded-full flex items-center justify-center text-amber-400 mb-2">
+        <i data-lucide="check-check" class="w-6 h-6"></i>
+      </div>
+      <h3 class="font-bold text-white text-sm mb-1">开局换牌确认</h3>
+      <p id="exchange-global-desc" class="text-xs text-slate-300 mb-3 leading-relaxed">
+        玩家 A 与 玩家 B 达成了互换牌约定。
+      </p>
+      
+      <!-- 交换的双方牌面明细预览 -->
+      <div class="flex items-center justify-center space-x-3 bg-black/50 p-2 rounded-xl border border-white/10 w-full mb-3">
+        <div class="flex flex-col items-center">
+          <span id="lbl-exchange-g-giver" class="text-[10px] text-amber-300 mb-1 font-bold">A 给出</span>
+          <div id="exchange-g-card-a"></div>
+        </div>
+        <i data-lucide="arrow-left-right" class="w-4 h-4 text-slate-400"></i>
+        <div class="flex flex-col items-center">
+          <span id="lbl-exchange-g-receiver" class="text-[10px] text-emerald-300 mb-1 font-bold">B 回赠</span>
+          <div id="exchange-g-card-b"></div>
+        </div>
+      </div>
+
+      <p class="text-[11px] text-amber-200/90 mb-3">本换牌需在场所有在席玩家确认后方可生效，是否同意？</p>
+
+      <div class="grid grid-cols-2 gap-2 w-full">
+        <button onclick="replyGlobalExchangeVote(false)" class="py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg text-xs font-semibold cursor-pointer">拒绝</button>
+        <button onclick="replyGlobalExchangeVote(true)" class="py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-xs font-bold shadow cursor-pointer">同意换牌</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ==================== 4. 牌桌顶部导航栏 (双行自适应布局) ==================== -->
+  <header class="bg-black/85 backdrop-blur-md border-b border-white/10 px-2.5 py-1.5 flex flex-col justify-center space-y-1.5 shrink-0 z-20 text-xs">
+    
+    <!-- 第一行：房号、本人身份、刷新、房号弹窗、设置、退出 -->
+    <div class="flex items-center justify-between w-full">
+      <div class="flex items-center space-x-1.5 shrink-0">
+        <div class="flex items-center bg-slate-800/90 text-slate-200 px-2 py-0.5 rounded border border-slate-700 shadow-sm space-x-1.5">
+          <span id="lbl-room-id-tag" class="text-[11px] text-amber-300 font-mono font-bold">房号:--</span>
+          <span class="text-slate-600">|</span>
+          <span class="text-[11px] text-slate-400">我:</span>
+          <strong id="lbl-my-seat" class="text-emerald-400 font-mono text-xs font-bold">?</strong>
+          <span id="lbl-is-host" class="text-[9px] bg-amber-500/20 text-amber-400 border border-amber-500/40 px-1 rounded hidden ml-0.5">房主</span>
+        </div>
+      </div>
+
+      <!-- 右侧操作区：刷新、房号、设置、退出 -->
+      <div class="flex items-center space-x-1.5 shrink-0">
+        <!-- 内置刷新标识 -->
+        <button id="btn-refresh-game" onclick="manualRefreshGame()" class="flex items-center space-x-1 px-2 py-0.5 rounded bg-slate-800 hover:bg-slate-700 active:scale-95 border border-slate-600 text-emerald-300 text-[11px] shadow-sm cursor-pointer" title="刷新并同步牌局数据">
+          <i data-lucide="rotate-cw" id="icon-refresh" class="w-3 h-3"></i>
+          <span>刷新</span>
+        </button>
+
+        <!-- 查看房号 -->
+        <button id="btn-show-room-info" onclick="openRoomInfoModal()" class="flex items-center space-x-1 px-1.5 py-0.5 rounded bg-slate-800 hover:bg-slate-700 border border-slate-600 text-amber-300 text-[11px] font-mono shadow-sm cursor-pointer" title="查看房间号">
+          <i data-lucide="key-round" class="w-3 h-3"></i>
+          <span>房号</span>
+        </button>
+
+        <!-- 房主专属设置按钮 (完整露出，移动端不被遮挡) -->
+        <button id="btn-host-panel" onclick="openHostModal()" class="flex items-center space-x-1 px-2 py-0.5 rounded bg-amber-600 hover:bg-amber-500 text-white font-semibold shadow cursor-pointer hidden shrink-0">
+          <i data-lucide="sliders-horizontal" class="w-3 h-3 pointer-events-none"></i>
+          <span class="pointer-events-none text-[11px]">设置</span>
+        </button>
+
+        <!-- 退出房间 -->
+        <button onclick="exitRoomToLobby()" class="p-1 rounded text-slate-400 hover:text-white bg-slate-800/80 border border-slate-700 cursor-pointer shrink-0 shadow-sm" title="退出房间">
+          <i data-lucide="log-out" class="w-3.5 h-3.5 pointer-events-none"></i>
+        </button>
+      </div>
+    </div>
+
+    <!-- 第二行：下方为 ABCD 在线状态及当前手牌数量，右侧为视角选择器 -->
+    <div class="flex items-center justify-between w-full">
+      <div class="flex items-center space-x-1.5 bg-slate-900/90 px-2 py-0.5 rounded border border-slate-700 shadow-inner">
+        <span id="conn-indicator-dot" class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse shadow-[0_0_5px_#34d399]" title="网络连接正常"></span>
+        <div class="w-[1px] h-3 bg-slate-700"></div>
+        <div id="seat-card-counts" class="flex items-center space-x-2.5 text-[11px] font-mono tracking-tight"></div>
+      </div>
+
+      <!-- 视角选择器 -->
+      <div class="flex items-center bg-black/40 rounded p-0.5 border border-white/10 shrink-0 shadow-inner">
+        <span class="text-[9px] text-slate-400 px-1">视角:</span>
+        <button onclick="trySwitchViewSeat('A')" class="seat-btn px-1.5 py-0.5 rounded text-[9px] font-mono bg-emerald-600 text-white font-bold shadow" data-seat="A">A</button>
+        <button onclick="trySwitchViewSeat('B')" class="seat-btn px-1.5 py-0.5 rounded text-[9px] font-mono text-slate-400 hover:bg-white/10" data-seat="B">B</button>
+        <button onclick="trySwitchViewSeat('C')" class="seat-btn px-1.5 py-0.5 rounded text-[9px] font-mono text-slate-400 hover:bg-white/10" data-seat="C">C</button>
+        <button onclick="trySwitchViewSeat('D')" class="seat-btn px-1.5 py-0.5 rounded text-[9px] font-mono text-slate-400 hover:bg-white/10" data-seat="D">D</button>
+      </div>
+    </div>
+  </header>
+
+  <!-- ==================== 5. 牌桌公共区 (展示两次出牌) ==================== -->
+  <main class="flex-1 min-h-0 flex flex-col items-center justify-center px-2 py-1 relative overflow-hidden">
+    <div class="w-full max-w-lg bg-black/50 backdrop-blur-sm border border-emerald-500/25 rounded-xl p-2 shadow-xl flex flex-col items-center shrink-0">
+      
+      <!-- 桌面状态头：去掉右上角冗余标签，保留出牌历史与撤回 -->
+      <div class="flex items-center justify-between w-full border-b border-white/10 pb-1 mb-1 text-xs">
+        <div class="flex items-center space-x-1.5">
+          <i data-lucide="history" class="w-3.5 h-3.5 text-emerald-400"></i>
+          <span class="font-bold text-emerald-200 text-[11px]">桌面出牌记录</span>
+        </div>
+        <div class="flex items-center space-x-1.5">
+          <button id="btn-undo-play" onclick="requestUndoLastPlay()" disabled class="flex items-center space-x-1 px-2 py-0.5 rounded bg-rose-950/80 hover:bg-rose-900 border border-rose-600/50 text-rose-300 disabled:opacity-30 disabled:cursor-not-allowed text-[10px] transition cursor-pointer shadow-sm">
+            <i data-lucide="rotate-ccw" class="w-3 h-3 pointer-events-none"></i>
+            <span class="pointer-events-none font-medium">撤回上次</span>
+          </button>
+        </div>
+      </div>
+
+      <!-- 垂直层级：上一手出牌在上方，最新出牌在下方 -->
+      <div class="w-full flex flex-col gap-1.5 py-0.5">
+        <!-- 1. 上一手出牌 (次区，在上方) -->
+        <div class="bg-black/25 rounded-lg border border-slate-700/50 p-1 flex flex-col items-center justify-center min-h-[50px]">
+          <span id="title-prev-play" class="text-[9px] text-slate-400 font-medium mb-0.5 self-start px-1">上一手出牌：暂无</span>
+          <div id="table-prev-played-cards" class="flex items-center justify-center w-full overflow-x-auto no-scrollbar py-0.5 opacity-75">
+            <div class="text-[10px] text-slate-500 italic">暂无上一手历史</div>
+          </div>
+        </div>
+
+        <!-- 2. 最新出牌 (主区，在下方) -->
+        <div class="bg-black/40 rounded-lg border border-amber-500/40 p-1 flex flex-col items-center justify-center min-h-[56px] shadow-inner">
+          <span id="title-latest-play" class="text-[9px] text-amber-300 font-bold mb-0.5 self-start px-1">最新出牌：暂无</span>
+          <div id="table-played-cards" class="flex items-center justify-center w-full overflow-x-auto no-scrollbar py-0.5">
+            <div class="text-[10px] text-emerald-100/40 italic">等待玩家出牌</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 过牌流式小字状态栏 -->
+      <div id="table-pass-history-bar" class="w-full text-center text-[10px] text-amber-200/80 bg-black/40 rounded px-2 py-0.5 mt-1 border border-white/5 truncate">
+        牌局准备就绪
+      </div>
+    </div>
+
+    <!-- 牌池统计 -->
+    <div class="mt-1 flex items-center space-x-2 text-[10px] text-emerald-100/70 bg-black/35 px-2.5 py-0.5 rounded-full border border-white/5 shrink-0">
+      <span>模式: <strong id="lbl-player-count-display" class="text-emerald-300 font-bold">4人局</strong></span>
+      <span>•</span>
+      <span>牌副: <strong id="lbl-deck-count" class="text-amber-300 font-bold">1副</strong></span>
+      <span>•</span>
+      <span>余牌: <strong id="lbl-pool-count" class="text-white font-mono">0</strong></span>
+      <span>•</span>
+      <span>沉默: <strong id="lbl-silenced-count" class="text-rose-300 font-mono">0</strong></span>
+    </div>
+  </main>
+
+  <!-- ==================== 6. 底部手牌操作区 ==================== -->
+  <footer id="footer-hand-panel" class="bg-black/85 backdrop-blur-md border-t border-white/15 px-2 pt-1 pb-2 h-[34vh] h-[34dvh] min-h-[220px] max-h-[42vh] flex flex-col z-10 shadow-2xl shrink-0">
+    <!-- 观战只读警告横幅 -->
+    <div id="spectator-warning-bar" class="hidden mb-1 py-0.5 px-2 bg-amber-500/20 border border-amber-500/40 rounded flex items-center justify-between text-[11px] text-amber-300">
+      <span>👀 正在巡视【<span id="spectator-target-seat" class="font-bold"></span>】的手牌 (只读观战)</span>
+      <button onclick="switchViewSeat(state.mySeat)" class="px-2 py-0.5 bg-amber-600 text-white rounded text-[10px] font-bold cursor-pointer">
+        返回我的手牌
+      </button>
+    </div>
+
+    <!-- 手牌工具操作栏：左侧排序，中右侧为递牌、过！、出牌(N) -->
+    <div class="flex items-center justify-between pb-1 text-xs shrink-0">
+      <div class="flex items-center space-x-1">
+        <button onclick="sortHand('DESC')" class="px-2 py-0.5 bg-slate-800 hover:bg-slate-700 border border-slate-600 rounded text-slate-200 text-[10px] transition cursor-pointer shadow-sm">大到小 ↓</button>
+        <button onclick="sortHand('ASC')" class="px-2 py-0.5 bg-slate-800 hover:bg-slate-700 border border-slate-600 rounded text-slate-200 text-[10px] transition cursor-pointer shadow-sm">小到大 ↑</button>
+        <button onclick="sortHand('SUIT')" class="px-2 py-0.5 bg-slate-800 hover:bg-slate-700 border border-slate-600 rounded text-slate-200 text-[10px] transition cursor-pointer shadow-sm">花色 ♠♥</button>
+      </div>
+
+      <div class="flex items-center space-x-1.5 sm:space-x-2">
+        <!-- 新的一局出牌前：递牌按钮 (仅在开局且选了1张牌时可用) -->
+        <button id="btn-exchange-card" onclick="openExchangeTargetModal()" disabled class="px-2.5 py-1 bg-teal-800 hover:bg-teal-700 disabled:opacity-30 disabled:cursor-not-allowed border border-teal-500/50 rounded font-bold text-teal-200 text-xs transition cursor-pointer shadow flex items-center space-x-1">
+          <i data-lucide="arrow-left-right" class="w-3 h-3 pointer-events-none"></i>
+          <span class="pointer-events-none">递牌</span>
+        </button>
+
+        <button id="btn-pass" onclick="actionPass()" class="px-3.5 py-1 bg-slate-800 hover:bg-slate-700 border border-slate-500 rounded font-bold text-slate-200 text-xs transition cursor-pointer shadow">过！</button>
+        <button id="btn-play" onclick="actionPlayCards()" disabled class="px-3.5 py-1 bg-amber-500 hover:bg-amber-400 disabled:opacity-40 disabled:cursor-not-allowed text-slate-950 font-black rounded shadow-lg transition text-xs cursor-pointer">出牌(0)</button>
+      </div>
+    </div>
+
+    <!-- 手牌视口 -->
+    <div id="hand-viewport" class="w-full flex-1 flex flex-col items-center justify-end overflow-hidden pb-0.5">
+      <div id="hand-cards-container" class="w-full h-full flex flex-col items-center justify-end"></div>
+    </div>
+  </footer>
+
+  <!-- ==================== 7. 房主控盘设置模态窗 ==================== -->
+  <div id="modal-host" class="fixed inset-0 z-40 bg-black/85 backdrop-blur-sm flex items-center justify-center p-3 hidden">
+    <div class="bg-slate-900 border border-slate-700 w-full max-w-lg rounded-2xl shadow-2xl flex flex-col max-h-[88vh] overflow-hidden text-xs">
+      <div class="px-4 py-2 border-b border-slate-800 flex items-center justify-between shrink-0">
+        <div class="flex items-center space-x-2">
+          <i data-lucide="settings" class="w-4 h-4 text-amber-400"></i>
+          <h3 class="font-bold text-sm text-white">房主控制台</h3>
+        </div>
+        <button onclick="closeHostModal()" class="text-slate-400 hover:text-white p-1 cursor-pointer">
+          <i data-lucide="x" class="w-4 h-4 pointer-events-none"></i>
+        </button>
+      </div>
+
+      <div class="p-4 overflow-y-auto space-y-3 flex-1">
+        <!-- 房间号分享 -->
+        <div class="bg-slate-800/80 p-2.5 rounded-xl border border-amber-500/30 flex items-center justify-between">
+          <div>
+            <span class="text-slate-400 text-xs block">当前 6 位房间号：</span>
+            <span id="host-modal-room-code" class="text-lg font-black text-amber-300 font-mono tracking-widest">------</span>
+          </div>
+          <button onclick="copyRoomCode()" class="px-3 py-1 bg-amber-600 hover:bg-amber-500 text-white rounded-lg text-xs font-semibold shadow cursor-pointer">
+            复制房间号
+          </button>
+        </div>
+
+        <!-- 牌局人数 -->
+        <div class="bg-slate-800/60 p-2.5 rounded-xl border border-slate-700">
+          <label class="font-bold text-amber-300 block mb-1.5 flex items-center space-x-1.5 text-xs">
+            <i data-lucide="users" class="w-3.5 h-3.5"></i>
+            <span>牌局人数设定</span>
+          </label>
+          <div class="grid grid-cols-3 gap-2">
+            <label class="flex items-center justify-center space-x-1.5 p-2 rounded-lg border border-slate-700 bg-slate-900/60 cursor-pointer">
+              <input type="radio" name="target-players-radio" value="2" onchange="updateTargetPlayers(2)" class="w-3.5 h-3.5 text-amber-500">
+              <span class="text-white text-xs font-medium">2 人局</span>
+            </label>
+            <label class="flex items-center justify-center space-x-1.5 p-2 rounded-lg border border-slate-700 bg-slate-900/60 cursor-pointer">
+              <input type="radio" name="target-players-radio" value="3" onchange="updateTargetPlayers(3)" class="w-3.5 h-3.5 text-amber-500">
+              <span class="text-white text-xs font-medium">3 人局</span>
+            </label>
+            <label class="flex items-center justify-center space-x-1.5 p-2 rounded-lg border border-slate-700 bg-slate-900/60 cursor-pointer">
+              <input type="radio" name="target-players-radio" value="4" checked onchange="updateTargetPlayers(4)" class="w-3.5 h-3.5 text-amber-500">
+              <span class="text-white text-xs font-medium">4 人局</span>
+            </label>
+          </div>
+        </div>
+
+        <!-- 扑克副数 -->
+        <div class="bg-slate-800/60 p-2.5 rounded-xl border border-slate-700">
+          <label class="font-bold text-amber-300 block mb-1.5 flex items-center space-x-1.5 text-xs">
+            <i data-lucide="copy" class="w-3.5 h-3.5"></i>
+            <span>扑克副数</span>
+          </label>
+          <div class="grid grid-cols-2 gap-2">
+            <label class="flex items-center space-x-2 p-2 rounded-lg border border-slate-700 bg-slate-900/60 cursor-pointer">
+              <input type="radio" name="deck-count-radio" value="1" checked onchange="updateDeckCount(1)" class="w-3.5 h-3.5 text-amber-500">
+              <span class="text-white text-xs font-medium">1 副牌 (54张)</span>
+            </label>
+            <label class="flex items-center space-x-2 p-2 rounded-lg border border-slate-700 bg-slate-900/60 cursor-pointer">
+              <input type="radio" name="deck-count-radio" value="2" onchange="updateDeckCount(2)" class="w-3.5 h-3.5 text-amber-500">
+              <span class="text-white text-xs font-medium">2 副牌 (108张)</span>
+            </label>
+          </div>
+        </div>
+
+        <!-- 沉默牌设置 -->
+        <div class="bg-slate-800/60 p-2.5 rounded-xl border border-slate-700">
+          <div class="flex items-center justify-between mb-1.5">
+            <label class="font-bold text-amber-300 flex items-center space-x-1.5 text-xs">
+              <i data-lucide="eye-off" class="w-3.5 h-3.5"></i>
+              <span>沉默/剔除牌规则</span>
+            </label>
+            <button onclick="clearSilenceRules()" type="button" class="text-[10px] text-slate-400 hover:text-white underline cursor-pointer">全部恢复</button>
+          </div>
+
+          <div class="mb-2">
+            <div class="text-[10px] text-slate-400 mb-1">王牌:</div>
+            <div class="grid grid-cols-3 gap-1.5">
+              <button type="button" onclick="toggleSilenceRule('BIG_JOKER_ONE')" class="silence-opt-btn p-1.5 rounded-lg border border-slate-700 bg-slate-900/80 text-slate-300 text-[11px] flex flex-col items-center justify-center transition cursor-pointer" data-silence="BIG_JOKER_ONE">
+                <span class="font-bold text-red-500 text-xs">🃏 1张大王</span>
+              </button>
+              <button type="button" onclick="toggleSilenceRule('SMALL_JOKER_ONE')" class="silence-opt-btn p-1.5 rounded-lg border border-slate-700 bg-slate-900/80 text-slate-300 text-[11px] flex flex-col items-center justify-center transition cursor-pointer" data-silence="SMALL_JOKER_ONE">
+                <span class="font-bold text-slate-200 text-xs">🃏 1张小王</span>
+              </button>
+              <button type="button" onclick="toggleSilenceRule('ALL_JOKERS')" class="silence-opt-btn p-1.5 rounded-lg border border-slate-700 bg-slate-900/80 text-slate-300 text-[11px] flex flex-col items-center justify-center transition cursor-pointer" data-silence="ALL_JOKERS">
+                <span class="font-bold text-amber-400 text-xs">🃏 全部大小王</span>
+              </button>
+            </div>
+          </div>
+
+          <div>
+            <div class="text-[10px] text-slate-400 mb-1">花色:</div>
+            <div class="grid grid-cols-4 gap-1.5">
+              <button type="button" onclick="toggleSilenceRule('SUIT_SPADE')" class="silence-opt-btn p-1.5 rounded-lg border border-slate-700 bg-slate-900/80 text-slate-300 text-[11px] flex flex-col items-center justify-center transition cursor-pointer" data-silence="SUIT_SPADE">
+                <span class="text-sm">♠</span>
+                <span class="text-[10px]">黑桃</span>
+              </button>
+              <button type="button" onclick="toggleSilenceRule('SUIT_HEART')" class="silence-opt-btn p-1.5 rounded-lg border border-slate-700 bg-slate-900/80 text-slate-300 text-[11px] flex flex-col items-center justify-center transition cursor-pointer" data-silence="SUIT_HEART">
+                <span class="text-sm text-red-500">♥</span>
+                <span class="text-[10px]">红桃</span>
+              </button>
+              <button type="button" onclick="toggleSilenceRule('SUIT_CLUB')" class="silence-opt-btn p-1.5 rounded-lg border border-slate-700 bg-slate-900/80 text-slate-300 text-[11px] flex flex-col items-center justify-center transition cursor-pointer" data-silence="SUIT_CLUB">
+                <span class="text-sm">♣</span>
+                <span class="text-[10px]">梅花</span>
+              </button>
+              <button type="button" onclick="toggleSilenceRule('SUIT_DIAMOND')" class="silence-opt-btn p-1.5 rounded-lg border border-slate-700 bg-slate-900/80 text-slate-300 text-[11px] flex flex-col items-center justify-center transition cursor-pointer" data-silence="SUIT_DIAMOND">
+                <span class="text-sm text-red-500">♦</span>
+                <span class="text-[10px]">方块</span>
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- 移交房主与重新发牌 -->
+        <div class="bg-slate-800/60 p-2.5 rounded-xl border border-slate-700 flex items-center justify-between flex-wrap gap-2">
+          <div class="flex items-center space-x-1.5">
+            <span class="text-slate-400 text-[11px]">移交房主:</span>
+            <select id="select-transfer-host" class="bg-slate-900 border border-slate-700 rounded px-2 py-0.5 text-slate-200 text-xs">
+              <option value="B">玩家 B</option>
+              <option value="C">玩家 C</option>
+              <option value="D">玩家 D</option>
+            </select>
+            <button onclick="transferHost()" type="button" class="px-2 py-0.5 bg-slate-700 hover:bg-slate-600 rounded text-slate-200 text-xs cursor-pointer shadow">确定</button>
+          </div>
+
+          <button onclick="executeShuffleAndDeal(true)" type="button" class="px-3.5 py-1 bg-emerald-600 hover:bg-emerald-500 font-bold text-white rounded-lg shadow-lg shadow-emerald-900/50 cursor-pointer text-xs transition">
+            重新洗牌并立即发牌
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // ==========================================
+    // 1. 扑克基础数据与花色权重定义 (♠ > ♥ > ♣ > ♦)
+    // ==========================================
+    const RANKS = [
+      { key: '2', label: '2', val: 2 }, { key: '3', label: '3', val: 3 },
+      { key: '4', label: '4', val: 4 }, { key: '5', label: '5', val: 5 },
+      { key: '6', label: '6', val: 6 }, { key: '7', label: '7', val: 7 },
+      { key: '8', label: '8', val: 8 }, { key: '9', label: '9', val: 9 },
+      { key: '10', label: '10', val: 10 }, { key: 'J', label: 'J', val: 11 },
+      { key: 'Q', label: 'Q', val: 12 }, { key: 'K', label: 'K', val: 13 },
+      { key: 'A', label: 'A', val: 14 }
+    ];
+
+    const SUITS = [
+      { key: 'SPADE', symbol: '♠', color: 'text-slate-900', order: 4 },
+      { key: 'HEART', symbol: '♥', color: 'text-red-600', order: 3 },
+      { key: 'CLUB', symbol: '♣', color: 'text-slate-900', order: 2 },
+      { key: 'DIAMOND', symbol: '♦', color: 'text-red-600', order: 1 }
+    ];
+
+    const JOKERS = [
+      { key: 'JOKER_S', label: '小王', suitKey: 'JOKER', color: 'text-slate-800', val: 15, order: 0 },
+      { key: 'JOKER_B', label: '大王', suitKey: 'JOKER', color: 'text-red-600', val: 16, order: 0 }
+    ];
+
+    function generateStandard54() {
+      const cards = [];
+      SUITS.forEach(s => {
+        RANKS.forEach(r => {
+          cards.push({
+            id: `${s.key}_${r.key}`, suitKey: s.key, suitSymbol: s.symbol,
+            suitColor: s.color, suitOrder: s.order, rankKey: r.key, label: r.label, val: r.val
+          });
+        });
+      });
+      JOKERS.forEach(j => {
+        cards.push({
+          id: j.key, suitKey: 'JOKER', suitSymbol: '🃏',
+          suitColor: j.color, suitOrder: j.order, rankKey: j.key, label: j.label, val: j.val
+        });
+      });
+      return cards;
+    }
+    const STANDARD_54 = generateStandard54();
+
+    // ==========================================
+    // 2. 状态模型 (含开局递牌阶段)
+    // ==========================================
+    let state = {
+      roomCode: '',
+      clientId: 'c_' + Math.random().toString(16).substring(2, 10),
+      mySeat: null,         // 本机实际归属席位 (A, B, C, D)
+      currentSeat: 'A',     // 当前正在查看的视角
+      hostSeat: 'A',
+      targetPlayers: 4,
+      deckCount: 1,
+      silenceRules: new Set(),
+      silencedCardCount: 0,
+      hands: { A: [], B: [], C: [], D: [] },
+      selectedCardIds: new Set(),
+      currentSort: 'DESC',
+      table: {
+        lastSeat: null,
+        lastCards: [],
+        prevSeat: null,
+        prevCards: [],
+        passEvents: []
+      },
+      onlineSeats: ['A'],
+      seatClientMap: { A: null, B: null, C: null, D: null },
+      peekAuthorized: false,
+      lastSnapshot: null
+    };
+
+    let undoVoteSession = {
+      active: false, requester: null, targetSeat: null, approvedA: false, approvedB: false
+    };
+
+    // 开局递牌会话状态
+    let exchangeSession = {
+      active: false,
+      giverSeat: null,
+      receiverSeat: null,
+      giverCard: null,
+      receiverCard: null,
+      // 全场玩家表决收集：seat -> boolean
+      approvals: {}
+    };
+
+    // 接收方挑选回赠牌时的暂存
+    let selectedReplyCardInstanceId = null;
+
+    // ==========================================
+    // 3. 通信核心：统一信道与网络保活强化
+    // ==========================================
+    let mqttClient = null;
+    let joinRetryTimer = null;
+    let heartbeatTimer = null;
+    const BROKER_URL = 'wss://broker.emqx.io:8084/mqtt';
+
+    function initMqtt(roomCode, isHost) {
+      state.roomCode = roomCode;
+      const roomTopic = `pokerbox/room/${roomCode}`;
+
+      mqttClient = mqtt.connect(BROKER_URL, {
+        clientId: state.clientId,
+        clean: true,
+        keepalive: 15,
+        connectTimeout: 8000,
+        reconnectPeriod: 1500
+      });
+
+      mqttClient.on('connect', () => {
+        updateNetworkIndicator(true);
+        mqttClient.subscribe(roomTopic, { qos: 1 }, (err) => {
+          if (err) return;
+          if (isHost) {
+            state.mySeat = 'A';
+            state.currentSeat = 'A';
+            state.hostSeat = 'A';
+            state.onlineSeats = ['A'];
+            state.seatClientMap['A'] = state.clientId;
+
+            document.getElementById('display-room-code').innerText = roomCode;
+            document.getElementById('host-modal-room-code').innerText = roomCode;
+            document.getElementById('lbl-room-id-tag').innerText = `房号:${roomCode}`;
+            document.getElementById('modal-room-info').classList.remove('hidden');
+
+            executeShuffleAndDeal(false);
+            renderAll();
+          } else {
+            sendJoinRequest();
+            if (joinRetryTimer) clearInterval(joinRetryTimer);
+            joinRetryTimer = setInterval(() => {
+              if (!state.mySeat) sendJoinRequest();
+              else clearInterval(joinRetryTimer);
+            }, 1200);
+          }
+        });
+
+        if (heartbeatTimer) clearInterval(heartbeatTimer);
+        heartbeatTimer = setInterval(() => {
+          if (mqttClient && mqttClient.connected && state.roomCode && state.mySeat) {
+            sendToRoom({ type: 'HEARTBEAT', seat: state.mySeat, clientId: state.clientId });
+          }
+        }, 10000);
+      });
+
+      mqttClient.on('offline', () => updateNetworkIndicator(false));
+      mqttClient.on('close', () => updateNetworkIndicator(false));
+      mqttClient.on('reconnect', () => {
+        const dot = document.getElementById('conn-indicator-dot');
+        if (dot) dot.className = 'w-2 h-2 rounded-full bg-amber-400 animate-ping shadow-[0_0_5px_#f59e0b]';
+      });
+
+      mqttClient.on('message', (topic, payload) => {
+        try {
+          const packet = JSON.parse(payload.toString());
+          handleMessage(packet);
+        } catch (e) {}
+      });
+    }
+
+    function sendJoinRequest() {
+      sendToRoom({
+        type: 'REQ_JOIN',
+        clientId: state.clientId
+      });
+    }
+
+    function sendToRoom(packet) {
+      if (mqttClient && mqttClient.connected) {
+        const topic = `pokerbox/room/${state.roomCode}`;
+        mqttClient.publish(topic, JSON.stringify(packet), { qos: 1 });
+      } else {
+        showToast('网络断开，正在尝试重连...');
+      }
+    }
+
+    function handleMessage(packet) {
+      if (!packet) return;
+
+      // 1. 玩家申请加入
+      if (packet.type === 'REQ_JOIN') {
+        if (state.mySeat === state.hostSeat) {
+          let assigned = null;
+          for (let s of ['B', 'C', 'D']) {
+            if (state.seatClientMap[s] === packet.clientId) { assigned = s; break; }
+          }
+          if (!assigned) {
+            for (let s of ['B', 'C', 'D']) {
+              if (!state.onlineSeats.includes(s)) {
+                assigned = s;
+                state.onlineSeats.push(s);
+                state.seatClientMap[s] = packet.clientId;
+                break;
+              }
+            }
+          }
+
+          if (assigned) {
+            sendToRoom({
+              type: 'ASSIGN_CONFIRM',
+              targetClientId: packet.clientId,
+              assignedSeat: assigned,
+              state: getSerializableState()
+            });
+
+            sendToRoom({
+              type: 'ONLINE_UPDATE',
+              onlineSeats: state.onlineSeats,
+              seatClientMap: state.seatClientMap
+            });
+            renderNavUI();
+          } else {
+            sendToRoom({ type: 'ROOM_FULL', targetClientId: packet.clientId });
+          }
+        }
+      }
+
+      // 2. 接收席位确认
+      else if (packet.type === 'ASSIGN_CONFIRM') {
+        if (packet.targetClientId === state.clientId && !state.mySeat) {
+          if (joinRetryTimer) clearInterval(joinRetryTimer);
+          state.mySeat = packet.assignedSeat;
+          state.currentSeat = packet.assignedSeat;
+          document.getElementById('lbl-room-id-tag').innerText = `房号:${state.roomCode}`;
+          document.getElementById('lobby-screen').classList.add('hidden');
+          applyFullRemoteState(packet.state);
+          showToast(`已成功入座席位【${state.mySeat}】`);
+        }
+      }
+
+      else if (packet.type === 'ROOM_FULL') {
+        if (packet.targetClientId === state.clientId && !state.mySeat) {
+          alert('当前房间席位已满！');
+          location.reload();
+        }
+      }
+
+      // 3. 在线人数与心跳
+      else if (packet.type === 'ONLINE_UPDATE') {
+        state.onlineSeats = packet.onlineSeats || state.onlineSeats;
+        state.seatClientMap = packet.seatClientMap || state.seatClientMap;
+        renderNavUI();
+      }
+      else if (packet.type === 'HEARTBEAT') {
+        if (packet.seat && !state.onlineSeats.includes(packet.seat)) {
+          state.onlineSeats.push(packet.seat);
+          renderNavUI();
+        }
+      }
+
+      // 4. 同步出牌数据
+      else if (packet.type === 'PLAY_SYNC') {
+        state.lastSnapshot = packet.snapshot || state.lastSnapshot;
+        state.table = packet.table;
+        if (packet.remainingCards && packet.seat) {
+          state.hands[packet.seat] = packet.remainingCards;
+        }
+        renderAll();
+      }
+
+      // 5. 同步重新发牌
+      else if (packet.type === 'DEAL_SYNC') {
+        state.hands = packet.hands;
+        state.table = packet.table;
+        state.lastSnapshot = null;
+        state.silencedCardCount = packet.silencedCardCount || 0;
+        state.deckCount = packet.deckCount || 1;
+        state.targetPlayers = packet.targetPlayers || 4;
+        sortHandArray(state.hands[state.currentSeat], state.currentSort);
+        renderAll();
+      }
+
+      // 6. 视角审批
+      else if (packet.type === 'PEEK_REQUEST') {
+        if (state.mySeat === 'B') {
+          document.getElementById('modal-b-approve').classList.remove('hidden');
+        }
+      }
+      else if (packet.type === 'PEEK_DECISION') {
+        if (state.mySeat === state.hostSeat) {
+          if (packet.approved) {
+            state.peekAuthorized = true;
+            alert('玩家 B 已同意申请！你现在可自由巡视任意玩家视角。');
+          } else {
+            alert('玩家 B 拒绝了你的视角查看申请。');
+          }
+        }
+      }
+
+      // 7. 出牌撤回流转
+      else if (packet.type === 'UNDO_REQUEST') {
+        if (state.mySeat === state.hostSeat) {
+          handleHostReceivedUndoRequest(packet);
+        }
+      }
+      else if (packet.type === 'UNDO_VOTE_ASK') {
+        document.getElementById('undo-approve-desc').innerText = 
+          `玩家 ${packet.requester} 申请撤回上一次出牌 (玩家 ${packet.targetSeat} 出了牌)。是否同意？`;
+        document.getElementById('modal-undo-approve').classList.remove('hidden');
+      }
+      else if (packet.type === 'UNDO_VOTE_REPLY') {
+        if (state.mySeat === state.hostSeat) {
+          handleVoteReplyFromB(packet.approved);
+        }
+      }
+      else if (packet.type === 'UNDO_EXECUTE') {
+        state.hands = packet.hands;
+        state.table = packet.table;
+        state.lastSnapshot = null;
+        sortHandArray(state.hands[state.currentSeat], state.currentSort);
+        renderAll();
+        showToast(`玩家 ${packet.requester} 的出牌撤回申请已生效！`);
+      }
+      else if (packet.type === 'UNDO_REJECTED') {
+        alert(`撤回申请未通过：已被【席位 ${packet.rejector}】拒绝。`);
+      }
+
+      // ==========================================
+      // 8. 递牌/换牌核心信令处理
+      // ==========================================
+      // 8.1 接收方收到发起方的递牌请求 (如B收到A递牌)
+      else if (packet.type === 'EXCHANGE_PROPOSAL') {
+        exchangeSession = {
+          active: true,
+          giverSeat: packet.giverSeat,
+          receiverSeat: packet.receiverSeat,
+          giverCard: packet.giverCard,
+          receiverCard: null,
+          approvals: {}
+        };
+
+        if (state.mySeat === packet.receiverSeat) {
+          openExchangeReplyModal(packet.giverSeat, packet.giverCard);
+        } else if (state.mySeat === packet.giverSeat) {
+          showToast(`已向玩家【${packet.receiverSeat}】发起递牌，等待对方挑选回赠牌...`);
+        }
+      }
+
+      // 8.2 接收方拒绝本次递牌
+      else if (packet.type === 'EXCHANGE_REJECTED_BY_RECEIVER') {
+        exchangeSession.active = false;
+        closeExchangeReplyModal();
+        closeExchangeGlobalModal();
+        if (state.mySeat === packet.giverSeat) {
+          alert(`玩家【${packet.receiverSeat}】拒绝了你的递牌请求。`);
+        } else {
+          showToast(`玩家【${packet.receiverSeat}】拒绝了递牌请求。`);
+        }
+      }
+
+      // 8.3 接收方挑好回赠牌 -> 广播给全场所有在场有效玩家再次确认
+      else if (packet.type === 'EXCHANGE_AGREED_PAIR') {
+        exchangeSession = {
+          active: true,
+          giverSeat: packet.giverSeat,
+          receiverSeat: packet.receiverSeat,
+          giverCard: packet.giverCard,
+          receiverCard: packet.receiverCard,
+          approvals: {}
+        };
+
+        closeExchangeReplyModal();
+        // 全员弹出确认弹窗
+        openExchangeGlobalModal();
+      }
+
+      // 8.4 收集全场玩家的确认结果 (由房主或各端统一计票)
+      else if (packet.type === 'EXCHANGE_GLOBAL_VOTE') {
+        if (!exchangeSession.active) return;
+        exchangeSession.approvals[packet.voterSeat] = packet.approved;
+
+        if (!packet.approved) {
+          // 只要有任何一名有效玩家拒绝，立即终止并通知
+          exchangeSession.active = false;
+          closeExchangeGlobalModal();
+          alert(`换牌未通过：玩家【${packet.voterSeat}】拒绝了本次换牌。`);
+          return;
+        }
+
+        // 检查是否所有在场的有效牌局玩家均已同意
+        const activeSeats = getActiveGameSeats();
+        const allApproved = activeSeats.every(s => exchangeSession.approvals[s] === true);
+
+        if (allApproved && state.mySeat === state.hostSeat) {
+          // 房主负责执行换牌并同步
+          executeCardExchange();
+        }
+      }
+
+      // 8.5 换牌成功生效执行
+      else if (packet.type === 'EXCHANGE_SUCCESS') {
+        exchangeSession.active = false;
+        closeExchangeGlobalModal();
+        state.hands = packet.hands;
+        sortHandArray(state.hands[state.currentSeat], state.currentSort);
+        renderAll();
+        showToast(`🎉 玩家 ${packet.giverSeat} 与 ${packet.receiverSeat} 换牌成功！`);
+      }
+
+      // 9. 状态全量拉取
+      else if (packet.type === 'REQ_SYNC') {
+        if (state.mySeat === state.hostSeat) {
+          broadcastFullState();
+        }
+      }
+      else if (packet.type === 'STATE_SYNC') {
+        applyFullRemoteState(packet.state);
+      }
+    }
+
+    function getSerializableState() {
+      return {
+        hostSeat: state.hostSeat,
+        targetPlayers: state.targetPlayers,
+        deckCount: state.deckCount,
+        silenceRules: Array.from(state.silenceRules),
+        silencedCardCount: state.silencedCardCount,
+        hands: state.hands,
+        table: state.table,
+        onlineSeats: state.onlineSeats,
+        seatClientMap: state.seatClientMap,
+        lastSnapshot: state.lastSnapshot
+      };
+    }
+
+    function applyFullRemoteState(remote) {
+      if (!remote) return;
+      state.hostSeat = remote.hostSeat || 'A';
+      state.targetPlayers = remote.targetPlayers || 4;
+      state.deckCount = remote.deckCount || 1;
+      state.silenceRules = new Set(remote.silenceRules || []);
+      state.silencedCardCount = remote.silencedCardCount || 0;
+      state.hands = remote.hands || { A: [], B: [], C: [], D: [] };
+      state.table = remote.table || { lastSeat: null, lastCards: [], prevSeat: null, prevCards: [], passEvents: [] };
+      state.onlineSeats = remote.onlineSeats || ['A'];
+      state.seatClientMap = remote.seatClientMap || {};
+      state.lastSnapshot = remote.lastSnapshot || null;
+
+      if (state.mySeat && !state.peekAuthorized) {
+        state.currentSeat = state.mySeat;
+      }
+
+      sortHandArray(state.hands[state.currentSeat], state.currentSort);
+      renderAll();
+    }
+
+    function broadcastFullState() {
+      sendToRoom({
+        type: 'STATE_SYNC',
+        state: getSerializableState()
+      });
+    }
+
+    function getActiveGameSeats() {
+      if (state.targetPlayers === 2) return ['A', 'B'];
+      if (state.targetPlayers === 3) return ['A', 'B', 'C'];
+      return ['A', 'B', 'C', 'D'];
+    }
+
+    // ==========================================
+    // 4. 换牌业务逻辑实现
+    // ==========================================
+    // 判断当前是否处于新的一局出牌前 (桌面上尚无任何出牌或过牌记录)
+    function isPreGamePhase() {
+      const noPlays = !state.table.lastCards || state.table.lastCards.length === 0;
+      const noPass = !state.table.passEvents || state.table.passEvents.length === 0;
+      return noPlays && noPass;
+    }
+
+    // 打开递牌目标选择弹窗
+    function openExchangeTargetModal() {
+      if (!isPreGamePhase()) {
+        return alert('牌局已出过牌，递牌仅支持在新的一局出牌前进行！');
+      }
+      if (state.currentSeat !== state.mySeat) {
+        return alert('观战视角下不能递牌，请切回自己的手牌！');
+      }
+      if (state.selectedCardIds.size !== 1) {
+        return alert('请在手牌中恰好选中 1 张你要递给对方的牌！');
+      }
+
+      const cardId = Array.from(state.selectedCardIds)[0];
+      const card = state.hands[state.mySeat].find(c => c.instanceId === cardId);
+      if (!card) return;
+
+      const descSpan = document.getElementById('exchange-selected-card-desc');
+      descSpan.innerHTML = `当前选中的牌：<span class="text-amber-300 font-bold font-mono">${card.suitSymbol} ${card.label}</span>`;
+
+      // 渲染目标玩家按钮 (排除自己，且必须在当前牌局席位内)
+      const container = document.getElementById('exchange-target-player-btns');
+      container.innerHTML = '';
+      const activeSeats = getActiveGameSeats().filter(s => s !== state.mySeat);
+
+      activeSeats.forEach(s => {
+        const btn = document.createElement('button');
+        const isOnline = state.onlineSeats.includes(s);
+        btn.className = `py-2 rounded-xl text-xs font-bold border flex flex-col items-center justify-center transition cursor-pointer ${
+          isOnline ? 'bg-slate-800 border-amber-500/50 text-amber-300 hover:bg-amber-600 hover:text-white' : 'bg-slate-900 border-slate-700 text-slate-500'
+        }`;
+        btn.innerHTML = `<span>玩家 ${s}</span><span class="text-[9px] font-normal ${isOnline ? 'text-emerald-400' : 'text-slate-600'}">${isOnline ? '在线' : '离线'}</span>`;
+        btn.onclick = () => submitExchangeProposal(s, card);
+        container.appendChild(btn);
+      });
+
+      document.getElementById('modal-exchange-target').classList.remove('hidden');
+    }
+
+    function closeExchangeTargetModal() {
+      document.getElementById('modal-exchange-target').classList.add('hidden');
+    }
+
+    // 发起递牌申请
+    function submitExchangeProposal(targetSeat, card) {
+      closeExchangeTargetModal();
+      if (!state.onlineSeats.includes(targetSeat)) {
+        if (!confirm(`玩家【${targetSeat}】当前可能未在线，确定仍要向其递牌吗？`)) return;
+      }
+
+      sendToRoom({
+        type: 'EXCHANGE_PROPOSAL',
+        giverSeat: state.mySeat,
+        receiverSeat: targetSeat,
+        giverCard: card
+      });
+    }
+
+    // 接收方打开挑选回赠牌弹窗
+    function openExchangeReplyModal(giverSeat, giverCard) {
+      selectedReplyCardInstanceId = null;
+      document.getElementById('exchange-reply-desc').innerText = `玩家【${giverSeat}】向你递来一张牌：`;
+      
+      // 预览递过来的牌
+      const preview = document.getElementById('exchange-from-card-preview');
+      preview.innerHTML = renderCardHtml(giverCard, false, false, false);
+
+      document.getElementById('exchange-reply-card-selected-tip').innerText = '未选择';
+      document.getElementById('btn-exchange-reply-confirm').disabled = true;
+
+      // 渲染接收方可选回赠牌列表
+      const pool = document.getElementById('exchange-reply-cards-pool');
+      pool.innerHTML = '';
+      const myHand = state.hands[state.mySeat] || [];
+
+      myHand.forEach(c => {
+        const cardBox = document.createElement('div');
+        cardBox.className = 'cursor-pointer p-0.5 rounded transition';
+        cardBox.innerHTML = renderCardHtml(c, false, true, false);
+        cardBox.onclick = () => {
+          selectedReplyCardInstanceId = c.instanceId;
+          document.getElementById('exchange-reply-card-selected-tip').innerText = `已选: ${c.suitSymbol} ${c.label}`;
+          document.getElementById('btn-exchange-reply-confirm').disabled = false;
+          
+          pool.querySelectorAll('.reply-card-active').forEach(el => el.classList.remove('reply-card-active', 'ring-2', 'ring-amber-400'));
+          cardBox.classList.add('reply-card-active', 'ring-2', 'ring-amber-400');
+        };
+        pool.appendChild(cardBox);
+      });
+
+      document.getElementById('modal-exchange-reply').classList.remove('hidden');
+    }
+
+    function closeExchangeReplyModal() {
+      document.getElementById('modal-exchange-reply').classList.add('hidden');
+    }
+
+    // 接收方决定是否同意并回赠
+    function replyExchangeOffer(accepted) {
+      if (!accepted) {
+        sendToRoom({
+          type: 'EXCHANGE_REJECTED_BY_RECEIVER',
+          giverSeat: exchangeSession.giverSeat,
+          receiverSeat: state.mySeat
+        });
+        closeExchangeReplyModal();
+        return;
+      }
+
+      if (!selectedReplyCardInstanceId) {
+        return alert('请先从下方挑选一张要回赠给对方的牌！');
+      }
+
+      const returnCard = state.hands[state.mySeat].find(c => c.instanceId === selectedReplyCardInstanceId);
+      if (!returnCard) return;
+
+      sendToRoom({
+        type: 'EXCHANGE_AGREED_PAIR',
+        giverSeat: exchangeSession.giverSeat,
+        receiverSeat: state.mySeat,
+        giverCard: exchangeSession.giverCard,
+        receiverCard: returnCard
+      });
+    }
+
+    // 全场全员确认弹窗展示
+    function openExchangeGlobalModal() {
+      const giver = exchangeSession.giverSeat;
+      const receiver = exchangeSession.receiverSeat;
+      const cA = exchangeSession.giverCard;
+      const cB = exchangeSession.receiverCard;
+
+      document.getElementById('exchange-global-desc').innerHTML = 
+        `玩家 <strong class="text-amber-300">【${giver}】</strong> 递给 玩家 <strong class="text-emerald-300">【${receiver}】</strong> 一张牌，对方回赠一张牌。`;
+      
+      document.getElementById('lbl-exchange-g-giver').innerText = `${giver} 递出`;
+      document.getElementById('lbl-exchange-g-receiver').innerText = `${receiver} 回赠`;
+
+      document.getElementById('exchange-g-card-a').innerHTML = renderCardHtml(cA, false, true, false);
+      document.getElementById('exchange-g-card-b').innerHTML = renderCardHtml(cB, false, true, false);
+
+      document.getElementById('modal-exchange-global-confirm').classList.remove('hidden');
+    }
+
+    function closeExchangeGlobalModal() {
+      document.getElementById('modal-exchange-global-confirm').classList.add('hidden');
+    }
+
+    // 玩家响应全员换牌确认
+    function replyGlobalExchangeVote(approved) {
+      closeExchangeGlobalModal();
+      sendToRoom({
+        type: 'EXCHANGE_GLOBAL_VOTE',
+        voterSeat: state.mySeat,
+        approved: approved
+      });
+    }
+
+    // 房主执行两张牌的互换转移并同步
+    function executeCardExchange() {
+      const g = exchangeSession.giverSeat;
+      const r = exchangeSession.receiverSeat;
+      const cardA = exchangeSession.giverCard;
+      const cardB = exchangeSession.receiverCard;
+
+      // 从 Giver 移除 cardA，加入 cardB
+      state.hands[g] = state.hands[g].filter(c => c.instanceId !== cardA.instanceId);
+      state.hands[g].push(cardB);
+
+      // 从 Receiver 移除 cardB，加入 cardA
+      state.hands[r] = state.hands[r].filter(c => c.instanceId !== cardB.instanceId);
+      state.hands[r].push(cardA);
+
+      // 重新排序
+      sortHandArray(state.hands[g], state.currentSort);
+      sortHandArray(state.hands[r], state.currentSort);
+
+      sendToRoom({
+        type: 'EXCHANGE_SUCCESS',
+        giverSeat: g,
+        receiverSeat: r,
+        hands: state.hands
+      });
+    }
+
+    // ==========================================
+    // 5. 手动刷新机制
+    // ==========================================
+    function manualRefreshGame() {
+      const icon = document.getElementById('icon-refresh');
+      if (icon) icon.classList.add('animate-spin');
+
+      if (!mqttClient || !mqttClient.connected) {
+        if (mqttClient) mqttClient.reconnect();
+        else if (state.roomCode) initMqtt(state.roomCode, state.mySeat === state.hostSeat);
+      }
+
+      sendToRoom({
+        type: 'REQ_SYNC',
+        fromSeat: state.mySeat,
+        clientId: state.clientId
+      });
+
+      if (state.mySeat === state.hostSeat) {
+        broadcastFullState();
+      }
+
+      renderAll();
+      showToast('牌局已刷新同步');
+
+      setTimeout(() => {
+        if (icon) icon.classList.remove('animate-spin');
+      }, 700);
+    }
+
+    function updateNetworkIndicator(online) {
+      const dot = document.getElementById('conn-indicator-dot');
+      if (!dot) return;
+      if (online) {
+        dot.className = 'w-2 h-2 rounded-full bg-emerald-400 animate-pulse shadow-[0_0_5px_#34d399]';
+        dot.title = '网络连接正常';
+      } else {
+        dot.className = 'w-2 h-2 rounded-full bg-rose-500 shadow-[0_0_5px_#f43f5e]';
+        dot.title = '网络已断开，点击刷新重连';
+      }
+    }
+
+    function showToast(msg) {
+      let toast = document.getElementById('game-toast');
+      if (!toast) {
+        toast = document.createElement('div');
+        toast.id = 'game-toast';
+        toast.className = 'fixed top-12 left-1/2 -translate-x-1/2 z-50 bg-black/90 border border-emerald-500/60 text-emerald-300 px-3 py-1 rounded-full text-xs shadow-xl transition-opacity duration-300 pointer-events-none opacity-0';
+        document.body.appendChild(toast);
+      }
+      toast.innerText = msg;
+      toast.classList.remove('opacity-0');
+      toast.classList.add('opacity-100');
+      setTimeout(() => {
+        toast.classList.remove('opacity-100');
+        toast.classList.add('opacity-0');
+      }, 1800);
+    }
+
+    // ==========================================
+    // 6. 撤回出牌 (双人审批)
+    // ==========================================
+    function requestUndoLastPlay() {
+      if (!state.lastSnapshot || !state.table.lastSeat) return alert('当前没有可撤回的出牌记录！');
+      if (!confirm(`确定要申请撤回上一次【席位 ${state.table.lastSeat}】的出牌吗？\n该操作需席位 A 与 B 共同同意。`)) return;
+
+      const reqPacket = { type: 'UNDO_REQUEST', requester: state.mySeat, targetSeat: state.table.lastSeat };
+
+      if (state.mySeat === state.hostSeat) {
+        handleHostReceivedUndoRequest(reqPacket);
+      } else {
+        sendToRoom(reqPacket);
+        showToast('已发起撤回申请，等待房主 A 与玩家 B 审批...');
+      }
+    }
+
+    function handleHostReceivedUndoRequest(packet) {
+      undoVoteSession = { active: true, requester: packet.requester, targetSeat: packet.targetSeat, approvedA: false, approvedB: false };
+
+      if (packet.requester === 'A') undoVoteSession.approvedA = true;
+      else {
+        document.getElementById('undo-approve-desc').innerText = `玩家 ${packet.requester} 申请撤回上一次出牌。是否同意？`;
+        document.getElementById('modal-undo-approve').classList.remove('hidden');
+      }
+
+      if (packet.requester === 'B') {
+        undoVoteSession.approvedB = true;
+        checkAndExecuteUndoIfBothApproved();
+      } else {
+        if (state.onlineSeats.includes('B')) {
+          sendToRoom({ type: 'UNDO_VOTE_ASK', requester: packet.requester, targetSeat: packet.targetSeat });
+        } else {
+          undoVoteSession.approvedB = true;
+          checkAndExecuteUndoIfBothApproved();
+        }
+      }
+    }
+
+    function replyUndoDecision(approved) {
+      document.getElementById('modal-undo-approve').classList.add('hidden');
+      if (state.mySeat === state.hostSeat) {
+        if (!approved) {
+          undoVoteSession.active = false;
+          sendToRoom({ type: 'UNDO_REJECTED', rejector: 'A' });
+          alert('你已拒绝该撤回申请。');
+        } else {
+          undoVoteSession.approvedA = true;
+          checkAndExecuteUndoIfBothApproved();
+        }
+      } else if (state.mySeat === 'B') {
+        sendToRoom({ type: 'UNDO_VOTE_REPLY', approved: approved });
+      }
+    }
+
+    function handleVoteReplyFromB(approved) {
+      if (!undoVoteSession.active) return;
+      if (!approved) {
+        undoVoteSession.active = false;
+        sendToRoom({ type: 'UNDO_REJECTED', rejector: 'B' });
+        alert('玩家 B 拒绝了撤回申请。');
+      } else {
+        undoVoteSession.approvedB = true;
+        checkAndExecuteUndoIfBothApproved();
+      }
+    }
+
+    function checkAndExecuteUndoIfBothApproved() {
+      if (undoVoteSession.approvedA && undoVoteSession.approvedB && undoVoteSession.active) {
+        undoVoteSession.active = false;
+        state.hands = JSON.parse(JSON.stringify(state.lastSnapshot.hands));
+        state.table = JSON.parse(JSON.stringify(state.lastSnapshot.table));
+        state.lastSnapshot = null;
+        sendToRoom({
+          type: 'UNDO_EXECUTE',
+          requester: undoVoteSession.requester,
+          hands: state.hands,
+          table: state.table
+        });
+        sortHandArray(state.hands[state.currentSeat], state.currentSort);
+        renderAll();
+        showToast('撤回已通过，桌面与手牌已恢复！');
+      }
+    }
+
+    // ==========================================
+    // 7. 视角切换控制
+    // ==========================================
+    function trySwitchViewSeat(targetSeat) {
+      if (targetSeat === state.mySeat) return switchViewSeat(targetSeat);
+      if (state.mySeat !== state.hostSeat) return alert('普通玩家不可透视其他玩家手牌！');
+      if (state.peekAuthorized) switchViewSeat(targetSeat);
+      else openHostRequestPeekModal();
+    }
+    function switchViewSeat(seat) { state.currentSeat = seat; state.selectedCardIds.clear(); renderAll(); }
+    function openHostRequestPeekModal() { document.getElementById('modal-host-request-peek').classList.remove('hidden'); }
+    function closeHostRequestPeekModal() { document.getElementById('modal-host-request-peek').classList.add('hidden'); }
+    function sendPeekRequestToB() {
+      closeHostRequestPeekModal();
+      if (!state.onlineSeats.includes('B')) return alert('玩家 B 当前未在线，无法发起审批！');
+      sendToRoom({ type: 'PEEK_REQUEST', from: state.mySeat });
+      showToast('已向玩家 B 发出巡视申请，等待批准...');
+    }
+    function replyPeekPermission(approved) {
+      document.getElementById('modal-b-approve').classList.add('hidden');
+      sendToRoom({ type: 'PEEK_DECISION', approved: approved });
+    }
+
+    // ==========================================
+    // 8. 建房与加入交互
+    // ==========================================
+    document.getElementById('btn-host-create').addEventListener('click', () => {
+      const roomCode = Math.floor(100000 + Math.random() * 900000).toString();
+      document.getElementById('lobby-screen').classList.add('hidden');
+      initMqtt(roomCode, true);
+    });
+
+    document.getElementById('btn-join-room').addEventListener('click', () => {
+      const code = document.getElementById('input-room-code').value.trim();
+      if (!code || code.length !== 6) {
+        alert('请输入正确的 6 位数字房间号！');
+        return;
+      }
+      initMqtt(code, false);
+    });
+
+    function openRoomInfoModal() {
+      document.getElementById('display-room-code').innerText = state.roomCode || '------';
+      document.getElementById('modal-room-info').classList.remove('hidden');
+    }
+    function closeRoomInfoModal() {
+      document.getElementById('modal-room-info').classList.add('hidden');
+    }
+
+    function copyRoomCode() {
+      if (!state.roomCode) return;
+      navigator.clipboard.writeText(state.roomCode).then(() => {
+        showToast(`房间号 ${state.roomCode} 已复制！`);
+      }).catch(() => {
+        alert(`房间号为：${state.roomCode}`);
+      });
+    }
+
+    function exitRoomToLobby() {
+      if (mqttClient) mqttClient.end();
+      location.reload();
+    }
+
+    // ==========================================
+    // 9. 发牌与规则
+    // ==========================================
+    function updateTargetPlayers(count) { state.targetPlayers = parseInt(count, 10); renderAll(); }
+    function updateDeckCount(count) { state.deckCount = parseInt(count, 10); renderHostSilenceUI(); }
+
+    function toggleSilenceRule(ruleKey) {
+      if (state.silenceRules.has(ruleKey)) state.silenceRules.delete(ruleKey);
+      else {
+        if (ruleKey === 'ALL_JOKERS') { state.silenceRules.delete('BIG_JOKER_ONE'); state.silenceRules.delete('SMALL_JOKER_ONE'); } 
+        else if (ruleKey === 'BIG_JOKER_ONE' || ruleKey === 'SMALL_JOKER_ONE') state.silenceRules.delete('ALL_JOKERS');
+        state.silenceRules.add(ruleKey);
+      }
+      renderHostSilenceUI();
+    }
+    function clearSilenceRules() { state.silenceRules.clear(); renderHostSilenceUI(); }
+
+    function executeShuffleAndDeal(closeModal = true) {
+      let pool = []; let instanceCounter = 1;
+      for (let d = 0; d < state.deckCount; d++) {
+        STANDARD_54.forEach(card => { pool.push({ ...card, instanceId: `inst_${instanceCounter++}_${card.id}`, deckIndex: d + 1 }); });
+      }
+      if (state.silenceRules.has('SUIT_SPADE')) pool = pool.filter(c => c.suitKey !== 'SPADE');
+      if (state.silenceRules.has('SUIT_HEART')) pool = pool.filter(c => c.suitKey !== 'HEART');
+      if (state.silenceRules.has('SUIT_CLUB')) pool = pool.filter(c => c.suitKey !== 'CLUB');
+      if (state.silenceRules.has('SUIT_DIAMOND')) pool = pool.filter(c => c.suitKey !== 'DIAMOND');
+      if (state.silenceRules.has('ALL_JOKERS')) pool = pool.filter(c => c.suitKey !== 'JOKER');
+      else {
+        if (state.silenceRules.has('BIG_JOKER_ONE')) { const idx = pool.findIndex(c => c.id === 'JOKER_B'); if (idx !== -1) pool.splice(idx, 1); }
+        if (state.silenceRules.has('SMALL_JOKER_ONE')) { const idx = pool.findIndex(c => c.id === 'JOKER_S'); if (idx !== -1) pool.splice(idx, 1); }
+      }
+
+      state.silencedCardCount = (54 * state.deckCount) - pool.length;
+      for (let i = pool.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [pool[i], pool[j]] = [pool[j], pool[i]]; }
+
+      let targetDealSeats = ['A', 'B'];
+      if (state.targetPlayers === 3) targetDealSeats = ['A', 'B', 'C'];
+      else if (state.targetPlayers === 4) targetDealSeats = ['A', 'B', 'C', 'D'];
+
+      state.hands = { A: [], B: [], C: [], D: [] };
+      let sIdx = 0;
+      pool.forEach(card => { state.hands[targetDealSeats[sIdx]].push(card); sIdx = (sIdx + 1) % targetDealSeats.length; });
+
+      state.selectedCardIds.clear();
+      state.table = {
+        lastSeat: null,
+        lastCards: [],
+        prevSeat: null,
+        prevCards: [],
+        passEvents: []
+      };
+      state.lastSnapshot = null;
+
+      ['A', 'B', 'C', 'D'].forEach(s => sortHandArray(state.hands[s], state.currentSort));
+      if (closeModal) closeHostModal();
+
+      sendToRoom({
+        type: 'DEAL_SYNC',
+        hands: state.hands,
+        table: state.table,
+        silencedCardCount: state.silencedCardCount,
+        deckCount: state.deckCount,
+        targetPlayers: state.targetPlayers
+      });
+      renderAll();
+    }
+
+    // ==========================================
+    // 10. 排序逻辑 (同点数 ♠ > ♥ > ♣ > ♦)
+    // ==========================================
+    function sortHandArray(handArr, sortType) {
+      if (!handArr) return;
+      if (sortType === 'DESC') {
+        handArr.sort((a, b) => b.val !== a.val ? b.val - a.val : b.suitOrder - a.suitOrder);
+      } else if (sortType === 'ASC') {
+        handArr.sort((a, b) => a.val !== b.val ? a.val - b.val : b.suitOrder - a.suitOrder);
+      } else if (sortType === 'SUIT') {
+        handArr.sort((a, b) => b.suitOrder !== a.suitOrder ? b.suitOrder - a.suitOrder : b.val - a.val);
+      }
+    }
+
+    function sortHand(type) { state.currentSort = type; sortHandArray(state.hands[state.currentSeat], type); renderHandUI(); }
+    
+    function toggleCardSelection(instanceId) {
+      if (state.currentSeat !== state.mySeat) return;
+      state.selectedCardIds.has(instanceId) ? state.selectedCardIds.delete(instanceId) : state.selectedCardIds.add(instanceId);
+      renderHandUI();
+    }
+
+    // ==========================================
+    // 11. 出牌与过牌
+    // ==========================================
+    function actionPlayCards() {
+      if (state.selectedCardIds.size === 0) return;
+      if (state.currentSeat !== state.mySeat) {
+        return alert(`当前处于【席位 ${state.currentSeat}】巡视视角，不可出牌！请切回【席位 ${state.mySeat}】自己的手牌。`);
+      }
+      if (!mqttClient || !mqttClient.connected) {
+        return alert('网络断开，请检查网络或点击顶部「刷新」按钮重连！');
+      }
+
+      const myRealSeat = state.mySeat;
+      state.lastSnapshot = { hands: JSON.parse(JSON.stringify(state.hands)), table: JSON.parse(JSON.stringify(state.table)) };
+
+      const played = []; const remaining = [];
+      state.hands[myRealSeat].forEach(card => {
+        if (state.selectedCardIds.has(card.instanceId)) played.push(card); else remaining.push(card);
+      });
+
+      state.table.prevSeat = state.table.lastSeat;
+      state.table.prevCards = state.table.lastCards;
+      state.table.lastSeat = myRealSeat;
+      state.table.lastCards = played;
+      state.table.passEvents = [];
+
+      state.hands[myRealSeat] = remaining;
+      state.selectedCardIds.clear();
+
+      sendToRoom({
+        type: 'PLAY_SYNC',
+        seat: myRealSeat,
+        table: state.table,
+        remainingCards: remaining,
+        snapshot: state.lastSnapshot
+      });
+      renderAll();
+    }
+
+    function actionPass() {
+      if (state.currentSeat !== state.mySeat) {
+        return alert(`当前处于【席位 ${state.currentSeat}】巡视视角，不可操作！`);
+      }
+      if (!mqttClient || !mqttClient.connected) {
+        return alert('网络断开，请点击顶部「刷新」重试！');
+      }
+
+      const myRealSeat = state.mySeat;
+      state.lastSnapshot = { hands: JSON.parse(JSON.stringify(state.hands)), table: JSON.parse(JSON.stringify(state.table)) };
+
+      if (!state.table.passEvents) state.table.passEvents = [];
+      state.table.passEvents.push(myRealSeat);
+      if (state.table.passEvents.length > 3) state.table.passEvents.shift();
+
+      state.selectedCardIds.clear();
+
+      sendToRoom({
+        type: 'PLAY_SYNC',
+        seat: myRealSeat,
+        table: state.table,
+        remainingCards: null,
+        snapshot: state.lastSnapshot
+      });
+      renderAll();
+    }
+
+    function transferHost() {
+      state.hostSeat = document.getElementById('select-transfer-host').value;
+      state.peekAuthorized = false;
+      closeHostModal();
+      broadcastFullState();
+      renderAll();
+    }
+
+    // ==========================================
+    // 12. 全局界面渲染
+    // ==========================================
+    function renderAll() { renderNavUI(); renderTableUI(); renderHandUI(); }
+
+    function renderNavUI() {
+      document.getElementById('lbl-my-seat').innerText = state.mySeat || '?';
+      document.getElementById('lbl-player-count-display').innerText = `${state.targetPlayers}人局`;
+
+      const isHost = state.mySeat === state.hostSeat;
+      document.getElementById('lbl-is-host').classList.toggle('hidden', !isHost);
+      document.getElementById('btn-host-panel').classList.toggle('hidden', !isHost);
+
+      // 下方第二行：ABCD 在线情况与实时手牌数量
+      let countsHtml = '';
+      ['A', 'B', 'C', 'D'].forEach(s => {
+        if (s === 'C' && state.targetPlayers < 3) return;
+        if (s === 'D' && state.targetPlayers < 4) return;
+        
+        const isOnline = state.onlineSeats.includes(s);
+        const cardCount = state.hands[s] ? state.hands[s].length : 0;
+        
+        if (isOnline) {
+          countsHtml += `<span class="text-emerald-300 font-bold">${s}:${cardCount}</span>`;
+        } else {
+          countsHtml += `<span class="text-slate-500">${s}:${cardCount}</span>`;
+        }
+      });
+      document.getElementById('seat-card-counts').innerHTML = countsHtml;
+
+      document.querySelectorAll('.seat-btn').forEach(btn => {
+        const s = btn.getAttribute('data-seat');
+        if (s === state.currentSeat) btn.className = 'seat-btn px-1.5 py-0.5 rounded text-[9px] font-mono bg-emerald-600 text-white font-bold shadow';
+        else btn.className = 'seat-btn px-1.5 py-0.5 rounded text-[9px] font-mono text-slate-400 hover:bg-white/10 cursor-pointer';
+      });
+    }
+
+    function renderTableUI() {
+      const latestContainer = document.getElementById('table-played-cards');
+      const prevContainer = document.getElementById('table-prev-played-cards');
+      const latestTitle = document.getElementById('title-latest-play');
+      const prevTitle = document.getElementById('title-prev-play');
+      const passBar = document.getElementById('table-pass-history-bar');
+      const undoBtn = document.getElementById('btn-undo-play');
+
+      const totalRemaining = ['A','B','C','D'].reduce((sum, s) => sum + (state.hands[s] ? state.hands[s].length : 0), 0);
+      document.getElementById('lbl-pool-count').innerText = totalRemaining;
+      document.getElementById('lbl-silenced-count').innerText = state.silencedCardCount || 0;
+      undoBtn.disabled = !state.table.lastSeat || !state.lastSnapshot;
+
+      // 1. 上一手出牌 (次区，在上方)
+      if (state.table.prevCards && state.table.prevCards.length > 0) {
+        prevTitle.innerText = `上一手出牌 (玩家 ${state.table.prevSeat} · ${state.table.prevCards.length}张)：`;
+        let prevHtml = '<div class="flex items-center justify-center -space-x-3.5">';
+        state.table.prevCards.forEach(c => { prevHtml += renderCardHtml(c, false, true, false); });
+        prevHtml += '</div>';
+        prevContainer.innerHTML = prevHtml;
+      } else {
+        prevTitle.innerText = '上一手出牌：暂无';
+        prevContainer.innerHTML = '<div class="text-[10px] text-slate-500 italic">暂无上一手历史</div>';
+      }
+
+      // 2. 最新出牌 (主区，在下方)
+      if (state.table.lastCards && state.table.lastCards.length > 0) {
+        latestTitle.innerText = `最新出牌 (玩家 ${state.table.lastSeat} · ${state.table.lastCards.length}张)：`;
+        let html = '<div class="flex items-center justify-center -space-x-3">';
+        state.table.lastCards.forEach(c => { html += renderCardHtml(c, false, true, false); });
+        html += '</div>';
+        latestContainer.innerHTML = html;
+      } else {
+        latestTitle.innerText = '最新出牌：暂无';
+        latestContainer.innerHTML = '<div class="text-[10px] text-emerald-100/40 italic">等待玩家出牌</div>';
+      }
+
+      // 3. 过牌流式小字状态
+      if (state.table.passEvents && state.table.passEvents.length > 0) {
+        const passListStr = state.table.passEvents.map(s => `【席位 ${s}】`).join('、');
+        passBar.innerHTML = `<span class="text-rose-300 font-medium">${passListStr} 选择了 过！</span>`;
+      } else {
+        passBar.innerText = state.table.lastSeat ? `轮到其他玩家出牌或过！` : `牌局准备就绪 (出牌前可发起递牌)`;
+      }
+    }
+
+    // 手牌区域渲染：包含递牌按钮的显隐与启用控制
+    function renderHandUI() {
+      const container = document.getElementById('hand-cards-container');
+      const myHand = state.hands[state.currentSeat] || [];
+      const selectedCount = state.selectedCardIds.size;
+      const isSpectating = state.currentSeat !== state.mySeat;
+
+      // 观战警示栏状态切换
+      const warningBar = document.getElementById('spectator-warning-bar');
+      if (isSpectating) {
+        warningBar.classList.remove('hidden');
+        document.getElementById('spectator-target-seat').innerText = state.currentSeat;
+      } else {
+        warningBar.classList.add('hidden');
+      }
+
+      // 递牌按钮状态：仅在新局出牌前且选中1张牌时激活
+      const exchangeBtn = document.getElementById('btn-exchange-card');
+      const inPreGame = isPreGamePhase();
+      if (!inPreGame || isSpectating) {
+        exchangeBtn.disabled = true;
+      } else {
+        exchangeBtn.disabled = selectedCount !== 1;
+      }
+
+      // 按钮文案与状态控制
+      const playBtn = document.getElementById('btn-play');
+      const passBtn = document.getElementById('btn-pass');
+      if (isSpectating) {
+        playBtn.disabled = true;
+        playBtn.innerText = '观战中';
+        playBtn.className = 'px-3.5 py-1 bg-slate-700 text-slate-400 font-bold rounded shadow text-xs cursor-not-allowed';
+        passBtn.disabled = true;
+        passBtn.className = 'px-3.5 py-1 bg-slate-800 text-slate-500 rounded border border-slate-700 text-xs cursor-not-allowed';
+      } else {
+        playBtn.innerText = `出牌(${selectedCount})`;
+        playBtn.disabled = selectedCount === 0;
+        playBtn.className = 'px-3.5 py-1 bg-amber-500 hover:bg-amber-400 disabled:opacity-40 disabled:cursor-not-allowed text-slate-950 font-black rounded shadow-lg transition text-xs cursor-pointer';
+        passBtn.disabled = false;
+        passBtn.className = 'px-3.5 py-1 bg-slate-800 hover:bg-slate-700 border border-slate-500 rounded font-bold text-slate-200 text-xs transition cursor-pointer shadow';
+      }
+
+      if (myHand.length === 0) {
+        container.innerHTML = `<div class="text-slate-400 text-xs py-8 italic text-center">手牌为空 (等待房主发牌)</div>`;
+        return;
+      }
+
+      const totalCards = myHand.length;
+      const rowCount = Math.max(1, Math.ceil(totalCards / 12));
+      const perRow = Math.ceil(totalCards / rowCount);
+
+      const rows = [];
+      for (let r = 0; r < rowCount; r++) {
+        rows.push(myHand.slice(r * perRow, (r + 1) * perRow));
+      }
+
+      const viewportWidth = window.innerWidth;
+      const availableWidth = viewportWidth - 16;
+      const cardBaseWidth = viewportWidth < 640 ? 52 : 58;
+      const cardHeight = viewportWidth < 640 ? 76 : 86;
+
+      container.innerHTML = '';
+
+      rows.forEach((rowCards, rIdx) => {
+        if (rowCards.length === 0) return;
+        const rowDiv = document.createElement('div');
+        
+        let rowOverlapStyle = '';
+        if (rIdx > 0) {
+          const overlapOffset = Math.round(cardHeight * 0.50);
+          rowOverlapStyle = `margin-top: -${overlapOffset}px;`;
+        }
+
+        rowDiv.style = rowOverlapStyle;
+        rowDiv.className = `flex items-end justify-center w-full relative z-${rIdx + 1}`;
+
+        const count = rowCards.length;
+        let overlapMargin = 0;
+        if (count > 1) {
+          const totalNaturalWidth = count * cardBaseWidth;
+          if (totalNaturalWidth > availableWidth) {
+            overlapMargin = Math.ceil((totalNaturalWidth - availableWidth) / (count - 1));
+            const maxOverlap = cardBaseWidth - 14;
+            if (overlapMargin > maxOverlap) overlapMargin = maxOverlap;
+          } else {
+            overlapMargin = 16;
+          }
+        }
+
+        rowCards.forEach((card, idx) => {
+          const isSelected = state.selectedCardIds.has(card.instanceId);
+          const isLast = idx === count - 1;
+          const wrapper = document.createElement('div');
+          wrapper.className = isSpectating ? 'shrink-0' : 'cursor-pointer shrink-0';
+          if (!isLast) wrapper.style.marginRight = `-${overlapMargin}px`;
+          wrapper.onclick = () => toggleCardSelection(card.instanceId);
+          wrapper.innerHTML = renderCardHtml(card, isSelected, false, false);
+          rowDiv.appendChild(wrapper);
+        });
+
+        container.appendChild(rowDiv);
+      });
+    }
+
+    function renderCardHtml(card, isSelected, isTable, isCompact) {
+      let sizeClass = 'w-[52px] h-[76px] sm:w-[58px] sm:h-[86px]';
+      if (isTable) sizeClass = 'w-9 h-13 sm:w-11 sm:h-16';
+
+      const transformClass = isSelected ? '-translate-y-4 ring-2 ring-amber-400 shadow-xl' : 'hover:-translate-y-1 shadow-md';
+      const isJoker = card.suitKey === 'JOKER';
+
+      if (isJoker) {
+        const char1 = card.label[0]; const char2 = card.label[1];
+        return `
+          <div class="card-transition ${sizeClass} bg-gradient-to-b from-white to-slate-100 rounded-lg border border-slate-300 flex flex-col justify-between p-1 select-none relative ${transformClass}">
+            <div class="flex flex-col items-center leading-none ${card.suitColor} font-black self-start">
+              <span class="${isTable ? 'text-[8.5px] sm:text-[10px]' : 'text-[11px] sm:text-[13px]'}">${char1}</span>
+              <span class="${isTable ? 'text-[8.5px] sm:text-[10px]' : 'text-[11px] sm:text-[13px]'} mt-[1px]">${char2}</span>
+            </div>
+            <div class="absolute inset-0 flex items-center justify-center pointer-events-none">
+              <span class="${isTable ? 'text-sm sm:text-base' : 'text-xl sm:text-2xl'} opacity-20 ${card.suitColor}">${card.suitSymbol}</span>
+            </div>
+            <div class="flex flex-col items-center leading-none ${card.suitColor} font-black self-end rotate-180">
+              <span class="${isTable ? 'text-[8.5px] sm:text-[10px]' : 'text-[11px] sm:text-[13px]'}">${char1}</span>
+              <span class="${isTable ? 'text-[8.5px] sm:text-[10px]' : 'text-[11px] sm:text-[13px]'} mt-[1px]">${char2}</span>
+            </div>
+          </div>
+        `;
+      }
+
+      return `
+        <div class="card-transition ${sizeClass} bg-gradient-to-b from-white to-slate-100 rounded-lg border border-slate-300 flex flex-col justify-between p-1 select-none relative ${transformClass}">
+          <div class="flex flex-col items-start leading-none self-start pl-0.5 pt-0.5">
+            <span class="${isTable ? 'text-[9.5px] sm:text-[11.5px]' : 'text-[13px] sm:text-[15px]'} font-black ${card.suitColor}">${card.label}</span>
+            <span class="${isTable ? 'text-[8.5px] sm:text-[10px]' : 'text-[11px] sm:text-[13px]'} ${card.suitColor} -mt-0.5">${card.suitSymbol}</span>
+          </div>
+          <div class="absolute inset-0 flex items-center justify-center pointer-events-none">
+            <span class="${isTable ? 'text-xs sm:text-sm' : 'text-base sm:text-xl'} opacity-15 ${card.suitColor}">${card.suitSymbol}</span>
+          </div>
+          <div class="flex flex-col items-start leading-none self-end pr-0.5 pb-0.5 rotate-180">
+            <span class="${isTable ? 'text-[9.5px] sm:text-[11.5px]' : 'text-[13px] sm:text-[15px]'} font-black ${card.suitColor}">${card.label}</span>
+            <span class="${isTable ? 'text-[8.5px] sm:text-[10px]' : 'text-[11px] sm:text-[13px]'} ${card.suitColor} -mt-0.5">${card.suitSymbol}</span>
+          </div>
+        </div>
+      `;
+    }
+
+    function renderHostSilenceUI() {
+      document.querySelectorAll('.silence-opt-btn').forEach(btn => {
+        const rule = btn.getAttribute('data-silence');
+        if (state.silenceRules.has(rule)) {
+          btn.className = 'silence-opt-btn p-1.5 rounded-lg border-2 border-amber-400 bg-amber-500/25 text-amber-200 text-[11px] flex flex-col items-center justify-center transition cursor-pointer shadow-md shadow-amber-950/40 font-bold';
+        } else {
+          btn.className = 'silence-opt-btn p-1.5 rounded-lg border border-slate-700 bg-slate-900/80 text-slate-300 text-[11px] flex flex-col items-center justify-center transition cursor-pointer hover:border-slate-500';
+        }
+      });
+    }
+
+    function openHostModal() {
+      renderHostSilenceUI();
+      const targetRadio = document.querySelector(`input[name="target-players-radio"][value="${state.targetPlayers}"]`);
+      if (targetRadio) targetRadio.checked = true;
+      document.getElementById('modal-host').classList.remove('hidden');
+    }
+    function closeHostModal() { document.getElementById('modal-host').classList.add('hidden'); }
+
+    window.addEventListener('resize', renderHandUI);
+    window.addEventListener('orientationchange', () => setTimeout(renderHandUI, 200));
+
+    window.addEventListener('DOMContentLoaded', () => {
+      try { if (window.lucide) lucide.createIcons(); } catch (e) {}
+    });
+  </script>
+</body>
+</html>
